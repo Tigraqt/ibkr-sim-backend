@@ -34,7 +34,7 @@ func main() {
 		fmt.Fprintln(w, "Welcome to the home page!")
 	})
 
-	apiMux.HandleFunc("POST /register", handlers.Register)
+	apiMux.HandleFunc("POST /register", handlers.Make(handlers.Register))
 	apiMux.HandleFunc("POST /login", handlers.Login)
 
 	mux.Handle("/api/", http.StripPrefix("/api", apiMux))

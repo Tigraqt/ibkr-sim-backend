@@ -15,55 +15,40 @@ import (
 	"gorm.io/gorm"
 )
 
-type RegisterFields struct {
-	Username string `json:"username"`
-	Password string `json:"password"`
-	Email    string `json:"email"`
-	FullName string `json:"full_name"`
-}
-
-type LoginCredentials struct {
-	Username string `json:"username"`
-	Password string `json:"password"`
-}
-
 type Claims struct {
 	Username string `json:"username"`
 	jwt.RegisteredClaims
 }
 
-func Register(w http.ResponseWriter, r *http.Request) {
+func Register(w http.ResponseWriter, r *http.Request) error {
 	var creds RegisterFields
 
 	if err := json.NewDecoder(r.Body).Decode(&creds); err != nil {
-		http.Error(w, "Invalid request payload", http.StatusBadRequest)
-		return
+		return InvalidJSON()
 	}
 
 	defer r.Body.Close()
 
-	// Validate the fields
-	if creds.Username == "" || creds.Password == "" || creds.Email == "" || creds.FullName == "" {
-		http.Error(w, "All fields are required", http.StatusBadRequest)
-		return
+	if errors := creds.validate(); len(errors) > 0 {
+		return InvalidRequestData(errors)
 	}
 
-	// Check if username already exists
+	// Check if username or email already exists
 	var existingUser models.User
-
-	if result := config.DB.Where("username = ?", creds.Username).First(&existingUser); result.Error == nil {
-		http.Error(w, "Username already exists", http.StatusBadRequest)
-		return
+	if result := config.DB.Where("username = ? OR email = ?", creds.Username, creds.Email).First(&existingUser); result.Error == nil {
+		if existingUser.Username == creds.Username {
+			return NewAPIError(http.StatusConflict, fmt.Errorf("username already exists"))
+		} else if existingUser.Email == creds.Email {
+			return NewAPIError(http.StatusConflict, fmt.Errorf("email already exists"))
+		}
 	} else if result.Error != nil && result.Error != gorm.ErrRecordNotFound {
-		http.Error(w, "Database error", http.StatusInternalServerError)
-		return
+		return fmt.Errorf("database error: %w", result.Error)
 	}
 
 	hashPassword, err := bcrypt.GenerateFromPassword([]byte(creds.Password), bcrypt.DefaultCost)
 
 	if err != nil {
-		http.Error(w, "Error creating user", http.StatusInternalServerError)
-		return
+		return NewAPIError(http.StatusInternalServerError, fmt.Errorf("error creating user"))
 	}
 
 	user := models.User{
@@ -80,16 +65,10 @@ func Register(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if result := config.DB.Create(&user); result.Error != nil {
-		http.Error(w, "Error saving user to database", http.StatusInternalServerError)
-		return
+		return NewAPIError(http.StatusInternalServerError, fmt.Errorf("error saving user to database"))
 	}
 
-	w.WriteHeader(http.StatusCreated)
-
-	json.NewEncoder(w).Encode(map[string]interface{}{
-		"message": "User created successfully",
-		"id":      user.ID,
-	})
+	return writeJSON(w, http.StatusCreated, user)
 }
 
 func Login(w http.ResponseWriter, r *http.Request) {
