@@ -35,11 +35,12 @@ type Claims struct {
 func Register(w http.ResponseWriter, r *http.Request) {
 	var creds RegisterFields
 
-	err := json.NewDecoder(r.Body).Decode(&creds)
-	if err != nil {
+	if err := json.NewDecoder(r.Body).Decode(&creds); err != nil {
 		http.Error(w, "Invalid request payload", http.StatusBadRequest)
 		return
 	}
+
+	defer r.Body.Close()
 
 	// Validate the fields
 	if creds.Username == "" || creds.Password == "" || creds.Email == "" || creds.FullName == "" {
@@ -49,8 +50,8 @@ func Register(w http.ResponseWriter, r *http.Request) {
 
 	// Check if username already exists
 	var existingUser models.User
-	result := config.DB.Where("username = ?", creds.Username).First(&existingUser)
-	if result.Error == nil {
+
+	if result := config.DB.Where("username = ?", creds.Username).First(&existingUser); result.Error == nil {
 		http.Error(w, "Username already exists", http.StatusBadRequest)
 		return
 	} else if result.Error != nil && result.Error != gorm.ErrRecordNotFound {
@@ -78,23 +79,28 @@ func Register(w http.ResponseWriter, r *http.Request) {
 		Role:              "user",
 	}
 
-	result = config.DB.Create(&user)
-	if result.Error != nil {
+	if result := config.DB.Create(&user); result.Error != nil {
 		http.Error(w, "Error saving user to database", http.StatusInternalServerError)
 		return
 	}
 
 	w.WriteHeader(http.StatusCreated)
+
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"message": "User created successfully",
+		"id":      user.ID,
+	})
 }
 
 func Login(w http.ResponseWriter, r *http.Request) {
 	var creds LoginCredentials
 
-	err := json.NewDecoder(r.Body).Decode(&creds)
-	if err != nil {
+	if err := json.NewDecoder(r.Body).Decode(&creds); err != nil {
 		http.Error(w, "Invalid request payload", http.StatusBadRequest)
 		return
 	}
+
+	defer r.Body.Close()
 
 	// Validate the fields
 	if creds.Username == "" || creds.Password == "" {
@@ -103,8 +109,7 @@ func Login(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var user models.User
-	result := config.DB.Where("username = ?", creds.Username).First(&user)
-	if result.Error != nil {
+	if result := config.DB.Where("username = ?", creds.Username).First(&user); result.Error != nil {
 		if result.Error == gorm.ErrRecordNotFound {
 			http.Error(w, "Invalid username or password", http.StatusUnauthorized)
 		} else {
@@ -113,8 +118,7 @@ func Login(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	err = bcrypt.CompareHashAndPassword([]byte(user.Password), []byte(creds.Password))
-	if err != nil {
+	if err := bcrypt.CompareHashAndPassword([]byte(user.Password), []byte(creds.Password)); err != nil {
 		http.Error(w, "Invalid username or password", http.StatusUnauthorized)
 		return
 	}
